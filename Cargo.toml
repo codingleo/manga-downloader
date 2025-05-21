@@ -1,0 +1,16 @@
+[package]
+name = "download-manga"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+clap = { version = "4.5.35", features = ["derive"] }
+futures = "0.3.31"
+genpdf = { version = "0.2.0", features = ["images"] }
+image = "0.25.6"
+reqwest = { version = "0.12.15", features = ["blocking"] }
+scraper = "0.23.1"
+tokio = { version = "1.44.2", features = ["full"] }
+dirs = "5.0.1"
+indicatif = { version = "0.17.8", features = ["improved_unicode"] }
+rusttype = "0.9.3"
