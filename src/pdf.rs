@@ -20,13 +20,38 @@ pub fn create_pdf_from_images(image_paths: &[impl AsRef<Path>], output_path: &Pa
     doc.set_title("Manga Chapter");
     doc.set_paper_size(genpdf::PaperSize::A4);
 
+    // Get page width (in mm)
+    // A4 paper size is 210mm x 297mm
+    let page_width = 210.0;
+
     // Add each image to the document
-    for path in image_paths {
+    for (i, path) in image_paths.iter().enumerate() {
+        // Load the image to get its dimensions
+        let img_data = load_image_from_path(path)?;
+        let img_width = img_data.width() as f64;
+
+        // Calculate scale to fit image to page width (considering margins)
+        // Assuming 10mm margins on each side (20mm total horizontal margins)
+        let available_width = page_width - 12.0; // Available width in mm
+
+        // Convert image width to mm (assuming 300 DPI)
+        let img_width_mm = img_width * 25.4 / 300.0;
+
+        // Calculate scale factor to fit width
+        let scale_factor = available_width / img_width_mm;
+
+        // Create and add the image with proper scaling
         let img = genpdf::elements::Image::from_path(path)
             .map_err(|e| DownloadError::ImageProcessingError(format!("Failed to load image: {}", e)))?
             .with_alignment(genpdf::Alignment::Center)
-            .with_scale(genpdf::Scale::new(1.0, 1.0));
+            .with_scale(genpdf::Scale::new(scale_factor, scale_factor));
+
         doc.push(img);
+
+        // Add a page break after each image except the last one
+        if i < image_paths.len() - 1 {
+            doc.push(genpdf::elements::PageBreak::new());
+        }
     }
 
     // Render the PDF to file
