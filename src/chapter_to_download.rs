@@ -2,6 +2,7 @@ use crate::error::DownloadError;
 
 pub struct ChapterToDownload {
   pub link: String,
+  pub url: String,
   pub title: String,
   pub images: Vec<String>,
   pub document: scraper::Html,
@@ -12,7 +13,13 @@ impl ChapterToDownload {
       let response = reqwest::get(&link).await?;
       let body = response.text().await?;
       let document = scraper::Html::parse_document(&body.trim());
-      let mut chapter = Self { link, title: String::new(), images: Vec::new(), document };
+      let mut chapter = Self {
+          link: link.clone(),
+          url: link,
+          title: String::new(),
+          images: Vec::new(),
+          document
+      };
       chapter.process_title()?;
       println!("processing images of chapter");
       chapter.process_images()?;

@@ -3,12 +3,16 @@ use std::env;
 use std::fs;
 use crate::error::DownloadError;
 use image;
+use log::{debug, info, warn, trace};
 
 /// Generates a PDF from a collection of image paths
 pub fn create_pdf_from_images(image_paths: &[impl AsRef<Path>], output_path: &Path) -> Result<(), DownloadError> {
     if image_paths.is_empty() {
         return Err(DownloadError::PdfGenerationError(String::from("Cannot create PDF: no images provided")));
     }
+
+    debug!("Creating PDF from {} images", image_paths.len());
+    trace!("Output path: {:?}", output_path);
 
     // Try to find a suitable font
     let font_family = find_system_font()
@@ -26,6 +30,8 @@ pub fn create_pdf_from_images(image_paths: &[impl AsRef<Path>], output_path: &Pa
 
     // Add each image to the document
     for (i, path) in image_paths.iter().enumerate() {
+        trace!("Processing image {}/{}", i+1, image_paths.len());
+
         // Load the image to get its dimensions
         let img_data = load_image_from_path(path)?;
         let img_width = img_data.width() as f64;
@@ -39,6 +45,8 @@ pub fn create_pdf_from_images(image_paths: &[impl AsRef<Path>], output_path: &Pa
 
         // Calculate scale factor to fit width
         let scale_factor = available_width / img_width_mm;
+        trace!("Image dimensions: {}x{}, scale factor: {:.2}",
+              img_data.width(), img_data.height(), scale_factor);
 
         // Create and add the image with proper scaling
         let img = genpdf::elements::Image::from_path(path)
@@ -55,50 +63,58 @@ pub fn create_pdf_from_images(image_paths: &[impl AsRef<Path>], output_path: &Pa
     }
 
     // Render the PDF to file
+    debug!("Rendering PDF to file: {:?}", output_path);
     doc.render_to_file(output_path)?;
+    info!("PDF created successfully with {} pages", image_paths.len());
 
     Ok(())
 }
 
 /// Finds a suitable system font with cross-platform support
 fn find_system_font() -> Result<genpdf::fonts::FontFamily<genpdf::fonts::FontData>, String> {
+    debug!("Looking for suitable font");
+
     // First try the embedded Roboto font which should be reliable
     if let Ok(font_family) = create_embedded_roboto_font() {
-        println!("Using embedded Roboto font");
+        info!("Using embedded Roboto font");
         return Ok(font_family);
     }
 
     // Then try with direct font paths that are known to work well
     if let Ok(font_family) = load_direct_system_font() {
-        println!("Using direct system font");
+        info!("Using direct system font");
         return Ok(font_family);
     }
 
     // Next, try to load from system font locations
     if let Ok(font_family) = find_system_font_from_paths() {
-        println!("Using system font");
+        info!("Using system font");
         return Ok(font_family);
     }
 
     // Then try to load from the bundled font file
     if let Ok(font_family) = load_bundled_font_from_file() {
-        println!("Using bundled font file");
+        info!("Using bundled font file");
         return Ok(font_family);
     }
 
+    warn!("Could not load any suitable font");
     Err("Could not load any suitable font".to_string())
 }
 
 /// Create a font family using the embedded Roboto font
 fn create_embedded_roboto_font() -> Result<genpdf::fonts::FontFamily<genpdf::fonts::FontData>, String> {
+    trace!("Attempting to use embedded Roboto font");
+
     // Check if Geneva.ttf exists on macOS and use it directly (known to work)
     if env::consts::OS == "macos" {
         let geneva_path = Path::new("/System/Library/Fonts/Geneva.ttf");
         if geneva_path.exists() {
+            debug!("Found Geneva.ttf on macOS: {:?}", geneva_path);
             if let Ok(bytes) = fs::read(geneva_path) {
                 match genpdf::fonts::FontData::new(bytes, None) {
                     Ok(font_data) => {
-                        println!("Using system Geneva font as embedded fallback");
+                        info!("Using system Geneva font as embedded fallback");
                         let regular = font_data.clone();
                         let bold = font_data.clone();
                         let italic = font_data.clone();
@@ -111,7 +127,9 @@ fn create_embedded_roboto_font() -> Result<genpdf::fonts::FontFamily<genpdf::fon
                             bold_italic,
                         });
                     },
-                    Err(_) => {} // Continue to try other fonts
+                    Err(e) => {
+                        debug!("Failed to load Geneva font: {}", e);
+                    } // Continue to try other fonts
                 }
             }
         }
@@ -121,11 +139,13 @@ fn create_embedded_roboto_font() -> Result<genpdf::fonts::FontFamily<genpdf::fon
     let font_bytes = include_bytes!("assets/fonts/Roboto-Regular.ttf");
 
     if font_bytes.len() < 1000 {
+        warn!("Embedded Roboto font bytes appear to be incomplete");
         return Err("Embedded Roboto font bytes appear to be incomplete".to_string());
     }
 
     match genpdf::fonts::FontData::new(font_bytes.to_vec(), None) {
         Ok(font_data) => {
+            debug!("Successfully loaded embedded Roboto font");
             // Use the same font for all styles
             let regular = font_data.clone();
             let bold = font_data.clone();
@@ -139,13 +159,17 @@ fn create_embedded_roboto_font() -> Result<genpdf::fonts::FontFamily<genpdf::fon
                 bold_italic,
             })
         },
-        Err(e) => Err(format!("Failed to load embedded Roboto font: {}", e)),
+        Err(e) => {
+            warn!("Failed to load embedded Roboto font: {}", e);
+            Err(format!("Failed to load embedded Roboto font: {}", e))
+        },
     }
 }
 
 /// Try to load a font that is known to work well with genpdf
 fn load_direct_system_font() -> Result<genpdf::fonts::FontFamily<genpdf::fonts::FontData>, String> {
     let os = env::consts::OS;
+    debug!("Attempting to load direct system font for OS: {}", os);
 
     // Prioritize TTF files which work better with rusttype than TTC files
     let font_paths = match os {
@@ -176,13 +200,15 @@ fn load_direct_system_font() -> Result<genpdf::fonts::FontFamily<genpdf::fonts::
     for path in font_paths {
         // Skip TTC files if they're likely to cause problems
         if path.ends_with(".ttc") && (path != "/System/Library/Fonts/Geneva.ttf") {
+            trace!("Skipping TTC file: {}", path);
             continue; // Skip TTC files as they often fail with rusttype
         }
 
+        trace!("Trying font: {}", path);
         if let Ok(bytes) = fs::read(path) {
             match genpdf::fonts::FontData::new(bytes.clone(), None) {
                 Ok(font_data) => {
-                    println!("Successfully loaded font: {}", path);
+                    info!("Successfully loaded font: {}", path);
                     // Create a font family with all styles using the same font
                     return Ok(genpdf::fonts::FontFamily {
                         regular: font_data.clone(),
@@ -191,30 +217,38 @@ fn load_direct_system_font() -> Result<genpdf::fonts::FontFamily<genpdf::fonts::
                         bold_italic: font_data,
                     });
                 },
-                Err(_) => {
+                Err(e) => {
+                    trace!("Failed to load font {}: {}", path, e);
                     // Don't log every failure as it's normal to try multiple fonts
                     // before finding one that works
                 }
             }
+        } else {
+            trace!("Font file not found or not readable: {}", path);
         }
     }
 
+    debug!("No direct system font found");
     Err("No direct system font found".to_string())
 }
 
 /// Try to locate a system font from various paths
 fn find_system_font_from_paths() -> Result<genpdf::fonts::FontFamily<genpdf::fonts::FontData>, String> {
+    debug!("Searching for system fonts in various paths");
     // Common font locations by platform
     let font_paths: Vec<(String, &str)> = get_platform_font_paths();
 
     // Try each font path
     for (path, font) in font_paths {
         let font_path = Path::new(&path).join(font);
+        trace!("Checking font path: {:?}", font_path);
+
         if font_path.exists() {
-            println!("Found font at: {}", font_path.display());
+            debug!("Found font at: {}", font_path.display());
             // Try directly first
             if let Ok(bytes) = fs::read(&font_path) {
                 if let Ok(font_data) = genpdf::fonts::FontData::new(bytes, None) {
+                    debug!("Successfully loaded font data directly");
                     let regular = font_data.clone();
                     let bold = font_data.clone();
                     let italic = font_data.clone();
@@ -226,16 +260,27 @@ fn find_system_font_from_paths() -> Result<genpdf::fonts::FontFamily<genpdf::fon
                         italic,
                         bold_italic,
                     });
+                } else {
+                    trace!("Failed to create font data from bytes for: {}", font_path.display());
                 }
+            } else {
+                trace!("Failed to read font file: {}", font_path.display());
             }
 
             // Try the normal way
-            if let Ok(font_family) = genpdf::fonts::from_files(&path, font, None) {
-                return Ok(font_family);
+            match genpdf::fonts::from_files(&path, font, None) {
+                Ok(font_family) => {
+                    debug!("Successfully loaded font family via genpdf API");
+                    return Ok(font_family);
+                },
+                Err(e) => {
+                    trace!("Failed to load font via genpdf API: {}", e);
+                }
             }
         }
     }
 
+    debug!("No system font found in searched paths");
     Err("No system font found".to_string())
 }
 
@@ -361,4 +406,73 @@ fn home_dir() -> Result<std::path::PathBuf, String> {
 fn load_image_from_path(path: impl AsRef<Path>) -> Result<image::DynamicImage, DownloadError> {
     image::open(path.as_ref())
         .map_err(|e| DownloadError::PdfGenerationError(format!("Failed to load image: {}", e)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::io::Write;
+
+    // Helper to create a temporary test image
+    fn create_test_image(path: &Path, width: u32, height: u32) -> Result<(), DownloadError> {
+        // Create an image
+        let mut img = image::RgbImage::new(width, height);
+
+        // Fill with a simple pattern
+        for (x, y, pixel) in img.enumerate_pixels_mut() {
+            *pixel = image::Rgb([
+                ((x as u32) % 256) as u8,
+                ((y as u32) % 256) as u8,
+                ((x + y) as u32 % 256) as u8,
+            ]);
+        }
+
+        // Save it
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|e| DownloadError::IoError(e))?;
+        }
+
+        img.save(path).map_err(|e|
+            DownloadError::ImageProcessingError(format!("Failed to save test image: {}", e))
+        )?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_create_pdf_from_images() {
+        // Create a temporary directory for the test
+        let temp_dir = std::env::temp_dir().join("manga_pdf_test");
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        // Create test images with different dimensions
+        let test_images = vec![
+            temp_dir.join("page1.jpg"),
+            temp_dir.join("page2.jpg"),
+            temp_dir.join("page3.jpg"),
+        ];
+
+        // Create images with different dimensions to test scaling
+        create_test_image(&test_images[0], 800, 1200).unwrap();
+        create_test_image(&test_images[1], 600, 900).unwrap();
+        create_test_image(&test_images[2], 1000, 1500).unwrap();
+
+        // Output PDF path
+        let output_path = temp_dir.join("test_output.pdf");
+
+        // Generate the PDF
+        let result = create_pdf_from_images(&test_images, &output_path);
+
+        // Verify the result
+        assert!(result.is_ok());
+        assert!(output_path.exists());
+
+        // Get file size to verify it's a valid PDF
+        let metadata = fs::metadata(&output_path).unwrap();
+        assert!(metadata.len() > 100); // Make sure it's not empty
+
+        // Clean up
+        let _ = fs::remove_dir_all(temp_dir);
+    }
 }

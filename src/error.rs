@@ -11,6 +11,7 @@ pub enum DownloadError {
     AttributeNotFound(String),
     ImageProcessingError(String),
     PdfGenerationError(String),
+    CacheError(String),
 }
 
 impl fmt::Display for DownloadError {
@@ -24,7 +25,7 @@ impl fmt::Display for DownloadError {
             DownloadError::AttributeNotFound(msg) => write!(f, "Attribute not found: {}", msg),
             DownloadError::ImageProcessingError(msg) => write!(f, "Image processing error: {}", msg),
             DownloadError::PdfGenerationError(msg) => write!(f, "PDF generation error: {}", msg),
-
+            DownloadError::CacheError(msg) => write!(f, "Cache operation failed: {}", msg),
         }
     }
 }
